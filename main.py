@@ -2,7 +2,7 @@ from flask import Flask, request
 import requests
 import os
 
-app = Flask(_name_)
+app = Flask(__name__)
 
 # Substitua abaixo pelo SEU token do BotFather
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -62,4 +62,5 @@ def send_message(chat_id, text, parse_mode=None):
 # ======== INICIALIZAÇÃO LOCAL =========
 if _name_ == '_main_':
     print("🚀 FACILITADOR LITE iniciado!")
+
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
