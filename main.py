@@ -103,7 +103,6 @@ async def setup_ptb_application():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receber_mensagem))
     
     # 3. Inicializa os componentes internos (A CORREÇÃO PRINCIPAL)
-    # Isso é crucial para ambientes de webhook fora do loop de Application.run()
     await application.initialize()
     logger.info("Application do PTB inicializada com sucesso.")
     
@@ -136,6 +135,8 @@ def telegram_webhook():
     """
     global application
     
+    # A verificação 'if not application' agora é uma segurança,
+    # pois o setup global deve ter definido 'application'.
     if not application:
         logger.error("Aplicação do PTB não inicializada. Retornando 500.")
         return jsonify({"status": "error", "message": "Application not initialized"}), 500
@@ -154,27 +155,26 @@ def telegram_webhook():
         
         except Exception as e:
             # Captura exceções durante o processamento
-            logger.error(f"Erro ao processar o update (exceção): {e}")
+            logger.error(f"Erro fatal ao processar o update (exceção): {e}")
             return jsonify({"status": "error", "message": "Update processing failed"}), 500
     
     return "OK", 200
 
 # ---------------------------
-# EXECUÇÃO PRINCIPAL
+# EXECUÇÃO DE SETUP (EXECUTADA POR GUNICORN NA IMPORTAÇÃO)
+# ---------------------------
+try:
+    # Este bloco executa a configuração de forma síncrona no escopo global. 
+    # Isso garante que 'application' seja definido quando o Gunicorn importar 'main:app'.
+    asyncio.run(setup_ptb_application())
+except Exception as e:
+    logger.error(f"Falha crítica ao configurar o PTB e o Webhook (Global Setup): {e}")
+
+# ---------------------------
+# EXECUÇÃO PRINCIPAL (APENAS PARA TESTES LOCAIS)
 # ---------------------------
 if __name__ == "__main__":
-    
-    # 1. Inicializa o PTB e o webhook de forma assíncrona
-    try:
-        asyncio.run(setup_ptb_application())
-    except Exception as e:
-        logger.error(f"Falha crítica ao configurar o PTB e o Webhook: {e}")
-        
-    # 2. Inicia o servidor Flask
     port = int(os.environ.get("PORT", 5000))
-    
     logger.info(f"Iniciando servidor Flask na porta {port}")
-    # Nota: Em produção (como no Render), o Gunicorn iniciará o app Flask.
-    # O bloco if __name__ == "__main__": é mais para testes locais ou para definir o webhook.
-    # Se você for usar o Gunicorn, o comando de inicialização deve ser 'gunicorn main:app'
+    # O setup já rodou acima no escopo global. Basta iniciar o Flask aqui.
     app.run(host="0.0.0.0", port=port)
