@@ -1,6 +1,8 @@
 import os
 import asyncio
-from flask import Flask, request, jsonify 
+import logging
+import threading
+from flask import Flask, request, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -10,8 +12,7 @@ from telegram.ext import (
     ContextTypes,
     filters
 )
-import logging
-import httpx # Importar httpx para a correção
+import httpx
 
 # ---------------------------
 # CONFIGURAÇÕES GERAIS
@@ -20,54 +21,65 @@ BOT_TOKEN = "8279037967:AAGWG7SnQFAT-GdpJvRTsL9rYW1ZFXgwraA"
 WEBHOOK_URL = "https://facilitador-lite.onrender.com/webhooks/telegram/action"
 
 app = Flask(__name__)
+
 # Configuração de logging
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", 
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Variável global para armazenar a instância do Application do PTB
-application = None 
+# Variáveis globais
+application = None
+bot_loop = None
+bot_thread = None
+
 
 # ---------------------------
-# HANDLERS
+# FUNÇÃO: Iniciar loop assíncrono em thread separada
 # ---------------------------
+def start_bot_event_loop():
+    global bot_loop
+    bot_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(bot_loop)
+    logger.info("Event loop do bot iniciado em thread dedicada.")
+    bot_loop.run_forever()
 
+
+# ---------------------------
+# HANDLERS DO BOT
+# ---------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mensagem inicial e menu principal"""
     keyboard = [
-        [InlineKeyboardButton("📦 ESTOQUE", callback_data="estoque")],
-        [InlineKeyboardButton("💰 FINANCEIRO", callback_data="financeiro")],
-        [InlineKeyboardButton("🧾 FATURAMENTO", callback_data="faturamento")],
-        [InlineKeyboardButton("🔧 SUCATA", callback_data="sucata")],
-        [InlineKeyboardButton("🛡️ GARANTIA", callback_data="garantia")],
-        [InlineKeyboardButton("📢 MARKETING", callback_data="marketing")]
+        [InlineKeyboardButton("ESTOQUE", callback_data="estoque")],
+        [InlineKeyboardButton("FINANCEIRO", callback_data="financeiro")],
+        [InlineKeyboardButton("FATURAMENTO", callback_data="faturamento")],
+        [InlineKeyboardButton("SUCATA", callback_data="sucata")],
+        [InlineKeyboardButton("GARANTIA", callback_data="garantia")],
+        [InlineKeyboardButton("MARKETING", callback_data="marketing")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if update.message:
         await update.message.reply_text(
-            "🤖 *FACILITADOR LITE*\nEscolha uma das opções abaixo:",
+            "*FACILITADOR LITE*\nEscolha uma das opções abaixo:",
             reply_markup=reply_markup,
             parse_mode="Markdown"
         )
 
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Responde a botões do menu"""
     query = update.callback_query
     await query.answer()
-
     data = query.data
 
     respostas = {
-        "estoque": "📦 *Consulta de Estoque*\nEnvie o código da bateria ou o modelo do veículo.",
-        "financeiro": "💰 *Financeiro*\nAqui você poderá consultar status de pagamentos e limites.",
-        "faturamento": "🧾 *Faturamento*\nVerifique notas emitidas e pedidos em andamento.",
-        "sucata": "🔧 *SUCATA*\nEnvie o número do lote para análise de descarte.",
-        "garantia": "🛡️ *GARANTIA*\nEnvie o número de série ou nota fiscal para validação.",
-        "marketing": "📢 *MARKETING*\nEnvie o nome da campanha ou solicitação de material."
+        "estoque": "*Consulta de Estoque*\nEnvie o código da bateria ou o modelo do veículo.",
+        "financeiro": "*Financeiro*\nAqui você poderá consultar status de pagamentos e limites.",
+        "faturamento": "*Faturamento*\nVerifique notas emitidas e pedidos em andamento.",
+        "sucata": "*SUCATA*\nEnvie o número do lote para análise de descarte.",
+        "garantia": "*GARANTIA*\nEnvie o número de série ou nota fiscal para validação.",
+        "marketing": "*MARKETING*\nEnvie o nome da campanha ou solicitação de material."
     }
 
     texto = respostas.get(data, "Selecione uma opção válida.")
@@ -75,116 +87,131 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def receber_mensagem(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Resposta genérica a mensagens"""
     if update.message:
         texto = update.message.text
         user = update.message.from_user.first_name
-        await update.message.reply_text(f"Olá {user}, recebi: '{texto}' 😉")
+        await update.message.reply_text(f"Olá {user}, recebi: '{texto}'")
 
 
 # ---------------------------
-# FUNÇÕES DE SETUP ROBUSTAS
+# SETUP DO BOT (assíncrono, mas chamado de forma síncrona)
 # ---------------------------
 async def setup_ptb_application():
-    """Inicializa, configura e define o webhook do Application do PTB (Assíncrono)."""
     global application
-    
-    # -----------------------------------------------------------------
-    # CORREÇÃO: Configurar um event loop e cliente httpx específico
-    # -----------------------------------------------------------------
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-    client = httpx.AsyncClient(event_loop=loop)
-    # -----------------------------------------------------------------
 
-    # 1. Cria a instância do Application
+    # Cliente HTTP assíncrono (sem event_loop obsoleto)
+    client = httpx.AsyncClient()
+
+    # Cria o Application
     application = (
         ApplicationBuilder()
         .token(BOT_TOKEN)
-        .http_client(client)  # <--- Injeta o cliente HTTP corrigido
+        .http_client(client)
         .build()
     )
 
-    # 2. Adiciona Handlers
+    # Adiciona handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receber_mensagem))
-    
-    # 3. Inicializa os componentes internos
+
+    # Inicializa
     await application.initialize()
-    logger.info("Application do PTB inicializada com sucesso.")
-    
-    # 4. Define o webhook
+    logger.info("Application do PTB inicializada.")
+
+    # Configura webhook
     try:
-        current_webhook = await application.bot.get_webhook_info()
-        if current_webhook.url != WEBHOOK_URL:
+        webhook_info = await application.bot.get_webhook_info()
+        if webhook_info.url != WEBHOOK_URL:
             await application.bot.set_webhook(url=WEBHOOK_URL)
-            logger.info(f"Webhook definido para: {WEBHOOK_URL}")
+            logger.info(f"Webhook configurado: {WEBHOOK_URL}")
         else:
-            logger.info("Webhook já está definido corretamente.")
+            logger.info("Webhook já está correto.")
     except Exception as e:
-        logger.error(f"Erro ao definir o webhook: {e}")
+        logger.error(f"Erro ao configurar webhook: {e}")
+
+
+# ---------------------------
+# INICIALIZAÇÃO DO BOT (chamado uma vez)
+# ---------------------------
+def initialize_bot():
+    global application
+    if application is not None:
+        return
+
+    try:
+        # Cria loop temporário para setup
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(setup_ptb_application())
+        loop.close()
+        logger.info("Bot inicializado com sucesso.")
+    except Exception as e:
+        logger.error(f"Falha crítica ao inicializar o bot: {e}")
+        raise
+
+
+# Registra inicialização antes da primeira requisição
+app.before_first_request(initialize_bot)
+
 
 # ---------------------------
 # FLASK ENDPOINTS
 # ---------------------------
 @app.route("/")
 def home():
-    """Endpoint de status para verificar se o serviço está ativo."""
-    return "🤖 FACILITADOR LITE ativo e rodando no Render 🚀"
+    return "FACILITADOR LITE ativo e rodando no Render"
 
 
 @app.route("/webhooks/telegram/action", methods=["POST"])
 def telegram_webhook():
-    """
-    Recebe updates do Telegram. Esta rota é SÍNCRONA,
-    e delega o processamento ao PTB de forma ASSÍNCRONA.
-    """
-    global application
-    
-    if not application:
-        logger.error("Aplicação do PTB não inicializada. Retornando 500.")
-        return jsonify({"status": "error", "message": "Application not initialized"}), 500
+    global application, bot_loop
 
-    # -----------------------------------------------------------------
-    # CORREÇÃO DO IndentationError:
-    # O bloco try...except DEVE estar recuado (com 4 espaços)
-    # DENTRO do 'if request.method == "POST":'
-    # -----------------------------------------------------------------
+    if not application:
+        logger.error("Bot não inicializado.")
+        return jsonify({"error": "Bot not initialized"}), 500
+
     if request.method == "POST":
         try:
             update_data = request.get_json(force=True)
-            logger.info(f"Update JSON recebido: {update_data.get('update_id', 'N/A')}")
-            
             update = Update.de_json(update_data, application.bot)
-            
-            asyncio.run(application.process_update(update))
-            
+
+            if not update:
+                return "Invalid update", 400
+
+            # Envia update para o loop do bot em thread segura
+            future = asyncio.run_coroutine_threadsafe(
+                application.process_update(update),
+                bot_loop
+            )
+            # Opcional: aguardar com timeout
+            future.result(timeout=10)
+
             return "OK", 200
-        
+
         except Exception as e:
-            logger.error(f"Erro fatal ao processar o update (exceção): {e}")
-            return jsonify({"status": "error", "message": "Update processing failed"}), 500
-    
-    # Se não for POST (embora o Telegram só use POST), retorna OK.
-    return "OK", 200
+            logger.error(f"Erro ao processar update: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    return "Method not allowed", 405
+
 
 # ---------------------------
-# EXECUÇÃO DE SETUP (EXECUTADA POR GUNICORN NA IMPORTAÇÃO)
+# INICIALIZAÇÃO DO LOOP DO BOT
 # ---------------------------
-try:
-    asyncio.run(setup_ptb_application())
-except Exception as e:
-    logger.error(f"Falha crítica ao configurar o PTB e o Webhook (Global Setup): {e}")
+# Inicia o loop assíncrono em uma thread separada ANTES do Flask
+if not bot_thread:
+    bot_thread = threading.Thread(target=start_bot_event_loop, daemon=True)
+    bot_thread.start()
+    # Pequena pausa para garantir que o loop inicie
+    import time
+    time.sleep(0.1)
+
 
 # ---------------------------
-# EXECUÇÃO PRINCIPAL (APENAS PARA TESTES LOCAIS)
+# EXECUÇÃO LOCAL (para testes)
 # ---------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    logger.info(f"Iniciando servidor Flask na porta {port}")
-    app.run(host="0.0.0.0", port=port)
+    logger.info(f"Iniciando Flask na porta {port}")
+    app.run(host="0.0.0.0", port=port, debug=True)
