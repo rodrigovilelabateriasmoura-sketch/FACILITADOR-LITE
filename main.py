@@ -135,8 +135,6 @@ def telegram_webhook():
     """
     global application
     
-    # A verificação 'if not application' agora é uma segurança,
-    # pois o setup global deve ter definido 'application'.
     if not application:
         logger.error("Aplicação do PTB não inicializada. Retornando 500.")
         return jsonify({"status": "error", "message": "Application not initialized"}), 500
@@ -144,6 +142,8 @@ def telegram_webhook():
     if request.method == "POST":
         try:
             update_data = request.get_json(force=True)
+            # NOVO LOG: Verifica se a requisição chegou
+            logger.info(f"Update JSON recebido: {update_data.get('update_id', 'N/A')}")
             
             # 1. Cria o objeto Update do PTB
             update = Update.de_json(update_data, application.bot)
