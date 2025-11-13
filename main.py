@@ -11,13 +11,12 @@ from telegram.ext import (
     filters
 )
 import logging
+import httpx # Importar httpx para a correção
 
 # ---------------------------
 # CONFIGURAÇÕES GERAIS
 # ---------------------------
-# Nota: É altamente recomendável usar variáveis de ambiente para tokens e URLs.
 BOT_TOKEN = "8279037967:AAGWG7SnQFAT-GdpJvRTsL9rYW1ZFXgwraA"
-# É vital que esta URL seja a URL pública do seu serviço no Render
 WEBHOOK_URL = "https://facilitador-lite.onrender.com/webhooks/telegram/action"
 
 app = Flask(__name__)
@@ -90,10 +89,25 @@ async def setup_ptb_application():
     """Inicializa, configura e define o webhook do Application do PTB (Assíncrono)."""
     global application
     
+    # -----------------------------------------------------------------
+    # CORREÇÃO: Configurar um event loop e cliente httpx específico
+    # -----------------------------------------------------------------
+    # Isso estabiliza as requisições HTTP de saída (para enviar respostas)
+    # em ambientes de produção como Gunicorn/Flask.
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+    client = httpx.AsyncClient(event_loop=loop)
+    # -----------------------------------------------------------------
+
     # 1. Cria a instância do Application
     application = (
         ApplicationBuilder()
         .token(BOT_TOKEN)
+        .http_client(client)  # <--- Injeta o cliente HTTP corrigido
         .build()
     )
 
@@ -102,7 +116,7 @@ async def setup_ptb_application():
     application.add_handler(CallbackQueryHandler(button))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receber_mensagem))
     
-    # 3. Inicializa os componentes internos (A CORREÇÃO PRINCIPAL)
+    # 3. Inicializa os componentes internos
     await application.initialize()
     logger.info("Application do PTB inicializada com sucesso.")
     
@@ -110,7 +124,6 @@ async def setup_ptb_application():
     try:
         current_webhook = await application.bot.get_webhook_info()
         if current_webhook.url != WEBHOOK_URL:
-             # Remove webhook antigo e define o novo
             await application.bot.set_webhook(url=WEBHOOK_URL)
             logger.info(f"Webhook definido para: {WEBHOOK_URL}")
         else:
@@ -140,41 +153,3 @@ def telegram_webhook():
         return jsonify({"status": "error", "message": "Application not initialized"}), 500
 
     if request.method == "POST":
-        try:
-            update_data = request.get_json(force=True)
-            # NOVO LOG: Verifica se a requisição chegou
-            logger.info(f"Update JSON recebido: {update_data.get('update_id', 'N/A')}")
-            
-            # 1. Cria o objeto Update do PTB
-            update = Update.de_json(update_data, application.bot)
-            
-            # 2. Processa o update de forma assíncrona
-            asyncio.run(application.process_update(update))
-            
-            return "OK", 200
-        
-        except Exception as e:
-            # Captura exceções durante o processamento
-            logger.error(f"Erro fatal ao processar o update (exceção): {e}")
-            return jsonify({"status": "error", "message": "Update processing failed"}), 500
-    
-    return "OK", 200
-
-# ---------------------------
-# EXECUÇÃO DE SETUP (EXECUTADA POR GUNICORN NA IMPORTAÇÃO)
-# ---------------------------
-try:
-    # Este bloco executa a configuração de forma síncrona no escopo global. 
-    # Isso garante que 'application' seja definido quando o Gunicorn importar 'main:app'.
-    asyncio.run(setup_ptb_application())
-except Exception as e:
-    logger.error(f"Falha crítica ao configurar o PTB e o Webhook (Global Setup): {e}")
-
-# ---------------------------
-# EXECUÇÃO PRINCIPAL (APENAS PARA TESTES LOCAIS)
-# ---------------------------
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    logger.info(f"Iniciando servidor Flask na porta {port}")
-    # O setup já rodou acima no escopo global. Basta iniciar o Flask aqui.
-    app.run(host="0.0.0.0", port=port)
