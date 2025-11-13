@@ -174,4 +174,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     
     logger.info(f"Iniciando servidor Flask na porta {port}")
+    # Nota: Em produção (como no Render), o Gunicorn iniciará o app Flask.
+    # O bloco if __name__ == "__main__": é mais para testes locais ou para definir o webhook.
+    # Se você for usar o Gunicorn, o comando de inicialização deve ser 'gunicorn main:app'
     app.run(host="0.0.0.0", port=port)
