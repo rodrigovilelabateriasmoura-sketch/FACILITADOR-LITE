@@ -68,4 +68,5 @@ dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, echo))
 # ----------------------------
 # Rotas Flask
 # ----------------------------
-@app.route('
+@app.route('/')
+
