@@ -1,6 +1,6 @@
 import os
 import asyncio
-from flask import Flask, request
+from flask import Flask, request, jsonify 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -16,13 +16,12 @@ import logging
 # CONFIGURAÇÕES GERAIS
 # ---------------------------
 # Nota: É altamente recomendável usar variáveis de ambiente para tokens e URLs.
-# BOT_TOKEN = os.environ.get("BOT_TOKEN", "8279037967:AAGWG7SnQFAT-GdpJvRTsL9rYW1ZFXgwraA")
-# WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://facilitador-lite.onrender.com/webhooks/telegram/action")
 BOT_TOKEN = "8279037967:AAGWG7SnQFAT-GdpJvRTsL9rYW1ZFXgwraA"
+# É vital que esta URL seja a URL pública do seu serviço no Render
 WEBHOOK_URL = "https://facilitador-lite.onrender.com/webhooks/telegram/action"
 
 app = Flask(__name__)
-# Configuração de logging (melhorada para ser mais informativa)
+# Configuração de logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", 
     level=logging.INFO
@@ -48,7 +47,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Verifica se a atualização é de uma mensagem antes de tentar acessar update.message
     if update.message:
         await update.message.reply_text(
             "🤖 *FACILITADOR LITE*\nEscolha uma das opções abaixo:",
@@ -60,7 +58,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Responde a botões do menu"""
     query = update.callback_query
-    # Sempre responda à consulta de callback
     await query.answer()
 
     data = query.data
@@ -75,7 +72,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
     texto = respostas.get(data, "Selecione uma opção válida.")
-    # Use edit_message_text para modificar a mensagem do botão
     await query.edit_message_text(text=texto, parse_mode="Markdown")
 
 
@@ -88,34 +84,40 @@ async def receber_mensagem(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------------------------
-# FUNÇÃO PRINCIPAL DE SETUP
+# FUNÇÕES DE SETUP ROBUSTAS
 # ---------------------------
-def setup_application():
-    """Inicializa e configura o Application do python-telegram-bot (síncrono)."""
+async def setup_ptb_application():
+    """Inicializa, configura e define o webhook do Application do PTB (Assíncrono)."""
     global application
     
+    # 1. Cria a instância do Application
     application = (
         ApplicationBuilder()
         .token(BOT_TOKEN)
         .build()
     )
 
-    # Comandos e handlers
+    # 2. Adiciona Handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button))
-    # Filtra mensagens de texto que não são comandos
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receber_mensagem))
     
-    logger.info("Application do PTB configurada.")
-    return application
-
-async def set_initial_webhook(app_instance):
-    """Define o webhook de forma assíncrona ao iniciar a aplicação."""
-    # Remove qualquer webhook antigo primeiro
-    await app_instance.bot.set_webhook(url=None)
-    # Define o novo webhook
-    await app_instance.bot.set_webhook(url=WEBHOOK_URL)
-    logger.info(f"Webhook definido para: {WEBHOOK_URL}")
+    # 3. Inicializa os componentes internos (A CORREÇÃO PRINCIPAL)
+    # Isso é crucial para ambientes de webhook fora do loop de Application.run()
+    await application.initialize()
+    logger.info("Application do PTB inicializada com sucesso.")
+    
+    # 4. Define o webhook
+    try:
+        current_webhook = await application.bot.get_webhook_info()
+        if current_webhook.url != WEBHOOK_URL:
+             # Remove webhook antigo e define o novo
+            await application.bot.set_webhook(url=WEBHOOK_URL)
+            logger.info(f"Webhook definido para: {WEBHOOK_URL}")
+        else:
+            logger.info("Webhook já está definido corretamente.")
+    except Exception as e:
+        logger.error(f"Erro ao definir o webhook: {e}")
 
 # ---------------------------
 # FLASK ENDPOINTS
@@ -130,49 +132,46 @@ def home():
 def telegram_webhook():
     """
     Recebe updates do Telegram. Esta rota é SÍNCRONA,
-    mas executa o processamento do PTB de forma ASSÍNCRONA
-    usando asyncio.run().
+    e delega o processamento ao PTB de forma ASSÍNCRONA.
     """
     global application
     
     if not application:
-        logger.error("Aplicação do PTB não inicializada.")
-        return "Internal Server Error", 500
+        logger.error("Aplicação do PTB não inicializada. Retornando 500.")
+        return jsonify({"status": "error", "message": "Application not initialized"}), 500
 
     if request.method == "POST":
-        update_data = request.get_json(force=True)
-        
-        # 1. Cria o objeto Update do PTB
-        update = Update.de_json(update_data, application.bot)
-        
-        # 2. Processa o update de forma assíncrona dentro do contexto síncrono do Flask
         try:
+            update_data = request.get_json(force=True)
+            
+            # 1. Cria o objeto Update do PTB
+            update = Update.de_json(update_data, application.bot)
+            
+            # 2. Processa o update de forma assíncrona
             asyncio.run(application.process_update(update))
+            
             return "OK", 200
+        
         except Exception as e:
-            logger.error(f"Erro ao processar o update: {e}")
-            return "Internal Server Error", 500
+            # Captura exceções durante o processamento
+            logger.error(f"Erro ao processar o update (exceção): {e}")
+            return jsonify({"status": "error", "message": "Update processing failed"}), 500
     
     return "OK", 200
 
 # ---------------------------
-# EXECUÇÃO
+# EXECUÇÃO PRINCIPAL
 # ---------------------------
 if __name__ == "__main__":
     
-    # 1. Inicializa a aplicação do PTB e os handlers
-    application = setup_application()
-    
-    # 2. Define o webhook inicial de forma assíncrona
+    # 1. Inicializa o PTB e o webhook de forma assíncrona
     try:
-        asyncio.run(set_initial_webhook(application))
+        asyncio.run(setup_ptb_application())
     except Exception as e:
-        logger.error(f"Erro ao definir o webhook inicial: {e}")
-
-    # 3. Inicia o servidor Flask
+        logger.error(f"Falha crítica ao configurar o PTB e o Webhook: {e}")
+        
+    # 2. Inicia o servidor Flask
     port = int(os.environ.get("PORT", 5000))
-    # Para produção, você usaria um WSGI/ASGI como Gunicorn.
-    # Em ambientes como o Render, ele pode ser iniciado por gunicorn automaticamente.
-    # Para testes locais, o Flask é suficiente.
+    
     logger.info(f"Iniciando servidor Flask na porta {port}")
     app.run(host="0.0.0.0", port=port)
