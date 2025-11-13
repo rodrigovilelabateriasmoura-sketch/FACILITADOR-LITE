@@ -60,7 +60,8 @@ def send_message(chat_id, text, parse_mode=None):
 
 
 # ======== INICIALIZAÇÃO LOCAL =========
-if _name_ == '_main_':
+if __name__ == "__main__":
     print("🚀 FACILITADOR LITE iniciado!")
 
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
+
