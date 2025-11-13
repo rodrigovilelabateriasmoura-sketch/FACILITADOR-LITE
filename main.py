@@ -1,55 +1,50 @@
-import logging
+import os
 from flask import Flask, request
-from telegram import Bot, Update
-from telegram.ext import Dispatcher, CommandHandler, MessageHandler, filters
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
 TOKEN = "8279037967:AAGWG7SnQFAT-GdpJvRTsL9rYW1ZFXgwraA"
-bot = Bot(token=TOKEN)
+WEBHOOK_URL = "https://facilitador-lite.onrender.com/webhooks/telegram/action"
 
 app = Flask(__name__)
 
-# Configuração de logging
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+# Cria a aplicação do bot
+application = ApplicationBuilder().token(TOKEN).build()
 
-# Handlers
-def start(update: Update, context):
-    update.message.reply_text("Olá! Sou o bot Facilitador Lite. Envie uma mensagem!")
+# === HANDLERS ===
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Olá! Sou o bot FACILITADOR LITE. Envie uma mensagem!")
 
-def help_command(update: Update, context):
-    update.message.reply_text("Use /start para começar ou envie qualquer mensagem.")
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Use /start para começar ou envie qualquer mensagem.")
 
-def handle_message(update: Update, context):
-    user_text = update.message.text
-    response = f"Você enviou: {user_text}"
-    update.message.reply_text(response)
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    await update.message.reply_text(f"Você enviou: {text}")
 
-# Dispatcher (síncrono)
-dispatcher = Dispatcher(bot, None, use_context=True)
-dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(CommandHandler("help", help_command))
-dispatcher.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+# Registra os handlers
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("help", help_command))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-# Webhook principal
+# === FLASK ROUTES ===
 @app.route("/")
 def index():
-    return "Bot ativo e rodando com sucesso!"
+    return "FACILITADOR LITE está ativo! 🚀"
 
-@app.route(f"/webhooks/telegram/action", methods=["POST"])
-def telegram_webhook():
+@app.route("/webhooks/telegram/action", methods=["POST"])
+def webhook():
     if request.method == "POST":
-        update = Update.de_json(request.get_json(force=True), bot)
-        dispatcher.process_update(update)
+        update_data = request.get_json(force=True)
+        update = Update.de_json(update_data, application.bot)
+        application.update_queue.put_nowait(update)
     return "ok"
 
 if __name__ == "__main__":
-    import os
-
-    # Configura o webhook automaticamente no início
-    URL = "https://facilitador-lite.onrender.com/webhooks/telegram/action"
-    bot.delete_webhook()
-    bot.set_webhook(URL)
+    # Configura o webhook automaticamente ao iniciar
+    import asyncio
+    asyncio.run(application.bot.delete_webhook())
+    asyncio.run(application.bot.set_webhook(url=WEBHOOK_URL))
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
