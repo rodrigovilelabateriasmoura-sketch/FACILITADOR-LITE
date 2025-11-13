@@ -1,113 +1,66 @@
-# ========================
-# FACILITADOR LITE - Bot CRM Moura
-# Versão otimizada para rodar no Replit com Telegram
-# ========================
-
-import os
-import requests
 from flask import Flask, request
-from bs4 import BeautifulSoup
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Dispatcher, CommandHandler, MessageHandler, Filters, CallbackContext, Updater
+import requests
+import os
 
-# ========= CONFIGURAÇÕES =========
-TOKEN = os.getenv("BOT_TOKEN")  # Adicione no Secrets do Replit: BOT_TOKEN
-app = Flask(__name__)
+app = Flask(_name_)
 
-# ========= MENUS PRINCIPAIS =========
-main_menu = [
-    ["📋 CLIENTES", "⚙️ SUCATA"],
-    ["🔧 GARANTIA", "🎯 MARKETING"],
-    ["🔋 QUAL É SUA BATERIA"]
-]
-keyboard = ReplyKeyboardMarkup(main_menu, resize_keyboard=True)
+# Substitua abaixo pelo SEU token do BotFather
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+if not TELEGRAM_TOKEN:
+    raise ValueError("⚠ TELEGRAM_TOKEN não definido nas variáveis de ambiente!")
 
-# ========= FUNÇÕES DE COMANDO =========
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text(
-        "👋 Olá! Eu sou o *FACILITADOR LITE* Moura ⚡\n"
-        "Sou seu assistente para consultas, cadastros e suporte rápido.\n\n"
-        "Escolha uma das opções abaixo para começar:",
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
+TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
-def handle_message(update: Update, context: CallbackContext):
-    text = update.message.text
-
-    if text == "📋 CLIENTES":
-        update.message.reply_text("📋 Módulo CLIENTES:\nEnvie os dados para cadastro ou consulta (em breve).")
-
-    elif text == "⚙️ SUCATA":
-        update.message.reply_text(
-            "🪫 Módulo SUCATA:\n\n"
-            "Envie os dados no formato:\n"
-            "`id_cliente | qtd_pdd | qtd_disponível | observações`\n\n"
-            "💡 O valor_financeiro será calculado automaticamente (R$6,00 por kg).",
-            parse_mode="Markdown"
-        )
-
-    elif text == "🔧 GARANTIA":
-        update.message.reply_text(
-            "🔧 Módulo GARANTIA:\n\n"
-            "Envie os dados no formato:\n"
-            "`id_cliente | data_coleta | modelos (separe por vírgula) | data_retorno | observações`",
-            parse_mode="Markdown"
-        )
-
-    elif text == "🎯 MARKETING":
-        update.message.reply_text(
-            "🎯 Módulo MARKETING:\n\n"
-            "Envie os dados no formato:\n"
-            "`id_cliente | materiais | tipo_campanha | bonificação | início | fim`",
-            parse_mode="Markdown"
-        )
-
-    elif text == "🔋 QUAL É SUA BATERIA":
-        update.message.reply_text(
-            "🔍 Digite o modelo exato do veículo (ex: Corolla 2020 2.0)\n"
-            "que vou buscar no site da Moura a bateria ideal."
-        )
-
-    elif any(x in text.lower() for x in ["corolla", "onix", "gol", "hb20", "civic", "strada", "fiesta", "hilux", "toro", "uno"]):
-        update.message.reply_text("🔎 Buscando no site da Moura...")
-        resposta = busca_bateria(text)
-        update.message.reply_text(resposta, parse_mode="Markdown")
-
-    else:
-        update.message.reply_text("🤔 Não entendi... selecione uma opção do menu abaixo.", reply_markup=keyboard)
-
-# ========= FUNÇÃO DE BUSCA DE BATERIA =========
-def busca_bateria(veiculo):
-    try:
-        url = "https://www.moura.com.br/descubra-qual-a-sua-bateria"
-        session = requests.Session()
-        r = session.get(url)
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        # Simula a busca (para evitar bloqueio Moura)
-        return f"🔋 Modelo recomendado para *{veiculo}*: M60GD\n💡 Fonte: moura.com.br"
-    except Exception as e:
-        return f"⚠️ Erro ao consultar: {e}"
-
-# ========= FLASK ROUTES =========
+# ======== ROTA RAIZ =========
 @app.route('/')
 def home():
-    return "FACILITADOR LITE Moura ativo 💪"
+    return "🤖 FACILITADOR LITE - Online e funcionando!"
 
-@app.route(f'/webhooks/telegram/action', methods=['POST'])
+# ======== ROTA DO WEBHOOK =========
+@app.route('/webhook', methods=['POST'])
 def webhook():
-    update = Update.de_json(request.get_json(force=True), context.bot)
-    dispatcher.process_update(update)
-    return "ok", 200
+    data = request.get_json()
 
-# ========= TELEGRAM DISPATCHER =========
-updater = Updater(TOKEN, use_context=True)
-dispatcher = updater.dispatcher
+    if not data:
+        return {"status": "ignored", "reason": "empty payload"}, 400
 
-dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    # Extrai dados da mensagem
+    message = data.get("message", {})
+    chat_id = message.get("chat", {}).get("id")
+    text = message.get("text", "")
 
-# ========= EXECUÇÃO =========
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080)
+    if not chat_id or not text:
+        return {"status": "ignored", "reason": "no chat_id or text"}, 200
+
+    print(f"📩 Mensagem recebida: {text} de {chat_id}")
+
+    if text.lower().startswith("/start"):
+        send_message(chat_id, "👋 Olá! Eu sou o FACILITADOR LITE.\n\nEnvie a placa do veículo ou o modelo para descobrir a bateria ideal Moura 🔋", parse_mode="Markdown")
+
+    elif len(text.strip()) >= 3:
+        # Aqui simulamos uma resposta simples
+        resposta = f"🔍 Buscando informações sobre o veículo: {text}\nAguarde um momento..."
+        send_message(chat_id, resposta, parse_mode="Markdown")
+    else:
+        send_message(chat_id, "❗ Digite algo válido, por favor.")
+
+    return {"status": "ok"}, 200
+
+
+# ======== FUNÇÃO PARA ENVIAR MENSAGEM =========
+def send_message(chat_id, text, parse_mode=None):
+    url = f"{TELEGRAM_API_URL}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text}
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+
+    response = requests.post(url, json=payload)
+    if response.status_code != 200:
+        print("⚠ Erro ao enviar mensagem:", response.text)
+
+
+# ======== INICIALIZAÇÃO LOCAL =========
+if _name_ == '_main_':
+    print("🚀 FACILITADOR LITE iniciado!")
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
+
